@@ -1,0 +1,225 @@
+package com.example.demorun2.myHosptional;
+
+import java.util.ArrayList;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+public class ThreadPoolTest {
+    public static void main(String[] args) {
+        int personSize = 10;
+        ArrayBlockingQueue<Person> personList = new ArrayBlockingQueue<>(10);
+        ExecutorService executorService = Executors.newCachedThreadPool();
+        HospitalWindows hospitalWindows = new HospitalWindows(personSize, personList);
+        for (int i = 1; i < 11; i++) {
+            executorService.execute(new Person(i+"号",hospitalWindows));
+        }
+    }
+}
+
+===========================================================================================================
+
+package com.example.demorun2.myHosptional;
+
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
+
+//窗口 包含 最大服务的人数
+public class HospitalWindows  {
+     private Integer max;  //最大服务人数
+
+    // put 阻塞操作 -- take 阻塞操作
+    // add -- remove
+    // offer -- poll
+    private ArrayBlockingQueue<Person> personList; //排队的人
+//    private List<String> personList; //排队的人
+
+     private Boolean check = true;
+
+     private static Lock lock = new ReentrantLock();
+
+//     public HospitalWindows(Integer max, List<String> personList) {
+//         this.max = max;
+//         this.personList = personList;
+//     }
+    public HospitalWindows(Integer max, ArrayBlockingQueue<Person> personList) {
+        this.max = max;
+        this.personList = personList;
+    }
+
+    public Integer addPerson(Person person){
+         try{
+             lock.lock();
+             if(this.personList.size()>this.max){
+                 System.out.println("窗口已满,请排队等待");
+                 return 0;
+             }
+             if(this.personList.size()<this.max){
+                 if(this.check){
+                     //轮到该人去跟医生对话
+                     person.setCheck(true);
+                 }else{
+                     //没有轮到这个人就去排队
+                     try {
+                         this.personList.put(person);
+                     } catch (InterruptedException e) {
+                         throw new RuntimeException(e);
+                     }
+                 }
+             }
+             return 1;
+         }finally {
+             lock.unlock();
+         }
+    }
+
+    public void removePerson(Person person){
+         try{
+             lock.lock();
+             if(this.personList.size()>0){
+                 if(person.getCheck()){
+                     person.setCheck(false);
+                     this.check = true;
+                     System.out.println(""+person.getName()+" 离开窗口");
+                 }
+             }
+         }finally {
+             lock.unlock();
+         }
+    }
+
+    //获取该人是否正在检查而不是在排队
+    public Boolean getCheck(){
+         return this.check;
+    }
+
+    public void setCheck(){
+        this.check = false;
+    }
+
+    public ArrayBlockingQueue<Person> getPersonList() {
+        return personList;
+    }
+
+    public void setPersonList(ArrayBlockingQueue<Person> personList) {
+        this.personList = personList;
+    }
+
+    public void getWindowsCheck() {
+        try{
+            lock.lock();
+            System.out.println("窗口人数"+this.getPersonList().size());
+            if(this.getPersonList().size()==0){
+                Thread.currentThread().interrupt();
+            }
+            if(this.getCheck()){
+                try {
+                    //取下一个人
+                    if(this.getPersonList().size()>0){
+                        Person nextPerson = this.getPersonList().take();
+                        System.out.println("现在"+this.getPersonList().size()+"个人在排队");
+                        if(nextPerson!=null){
+                            if(this.getCheck()){
+                                this.setCheck();
+                                nextPerson.setCheck(true);
+                                System.out.println(nextPerson.getName()+"开始检查");
+                                try {
+                                    Thread.sleep(3000);
+                                } catch (InterruptedException e) {
+                                    throw new RuntimeException(e);
+                                }
+                                System.out.println(nextPerson.getName()+"检查结束");
+                                this.removePerson(nextPerson);
+                            }
+                        }
+                    }else{
+                        System.out.println("现在"+this.getPersonList().size()+"个人在排队");
+                    }
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        }finally {
+            lock.unlock();
+        }
+    }
+}
+
+
+==============================================================================================================
+
+
+package com.example.demorun2.myHosptional;
+
+public class Person implements Runnable{
+    private HospitalWindows hospitalWindows;
+
+    private String name;
+
+    private Boolean check = false;
+
+    public Person(String name,HospitalWindows hospitalWindows){
+        this.name = name;
+        this.hospitalWindows = hospitalWindows;
+    }
+
+    @Override
+    public void run() {
+        Integer flag = hospitalWindows.addPerson(this);
+        if(flag==1){
+            if(hospitalWindows.getCheck()){
+                hospitalWindows.setCheck();
+                System.out.println(name+"开始检查");
+                try {
+                    Thread.sleep(3000);
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
+                System.out.println(name+"检查结束");
+                hospitalWindows.removePerson(this);
+            }else{
+                System.out.println(name+" 排队等待检查");
+                //循环去查看医生谈话标识是否放开
+                while (true){
+                    try {
+                        //停顿一下去循环，让cpu有切换时间
+                        Thread.sleep(1000);
+                    } catch (InterruptedException e) {
+                        //如果有睡眠，则中断线程信号，会被重新置为为false,所以这里还要再次设置中断标记
+                        Thread.currentThread().interrupt();
+                    }
+
+                    //线程判断中断信号
+                    //有两种中断，一种 isTerrupted，只是判断标记
+                    //一种 是  interrupted 判断并清除标记 设为false
+                    if(Thread.interrupted()){
+                        break;
+                    }
+                    //获取标识
+                    hospitalWindows.getWindowsCheck();
+
+                }
+            }
+        }
+    }
+
+    public Boolean getCheck(){
+        return this.check;
+    }
+
+    public void setCheck(Boolean flag){
+        this.check = flag;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+}
+
+
+
